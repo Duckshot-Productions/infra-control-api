@@ -1,0 +1,69 @@
+name: Scraper Fleet Control
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Comma-separated scraper targets (or "all")'
+        required: false
+        default: 'all'
+      mode:
+        description: 'Execution mode'
+        required: false
+        type: choice
+        options:
+          - parallel
+          - sequential
+        default: 'parallel'
+
+jobs:
+  trigger-scrapers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ${{ fromJson(github.event.inputs.targets == 'all' && '["site_a", "site_b", "site_c"]' || format('[{0}]', github.event.inputs.targets)) }}
+      fail-fast: false
+      max-parallel: ${{ github.event.inputs.mode == 'parallel' && 10 || 1 }}
+    
+    steps:
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      
+      - name: Trigger scraper for ${{ matrix.target }}
+        id: scraper
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.CONTROL_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"target": "${{ matrix.target }}"}' \
+            https://${{ secrets.VPS_TAILSCALE_IP }}:5000/run-scraper)
+          
+          echo "$RESPONSE" | jq .
+          
+          # Check if successful
+          STATUS=$(echo "$RESPONSE" | jq -r '.status')
+          if [ "$STATUS" != "started" ] && [ "$STATUS" != "queued" ]; then
+            echo "❌ Scraper failed to start"
+            exit 1
+          fi
+      
+      - name: Wait for completion (optional)
+        if: github.event.inputs.mode == 'sequential'
+        run: |
+          echo "Waiting for scraper to complete..."
+          for i in {1..60}; do
+            STATUS=$(curl -s -H "Authorization: Bearer ${{ secrets.CONTROL_API_TOKEN }}" \
+              https://${{ secrets.VPS_TAILSCALE_IP }}:5000/scraper-status/${{ matrix.target }} | jq -r '.status')
+            
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+              echo "Scraper finished with status: $STATUS"
+              break
+            fi
+            sleep 10
+          done

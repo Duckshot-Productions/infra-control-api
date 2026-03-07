@@ -1,0 +1,17 @@
+[Unit]
+Description=Infra Control API Service
+After=network.target tailscaled.service
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/infra-control-api
+Environment="PATH=/opt/infra-control-api/venv/bin"
+EnvironmentFile=/opt/infra-control-api/.env
+ExecStart=/opt/infra-control-api/venv/bin/gunicorn -w 4 -b ${TAILSCALE_IP}:5000 server:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

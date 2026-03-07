@@ -1,0 +1,70 @@
+name: MCP Tool Orchestration
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: 'MCP Tool to execute'
+        required: true
+        type: string
+      arguments:
+        description: 'Tool arguments (JSON)'
+        required: true
+        type: string
+      llm_preference:
+        description: 'LLM routing preference'
+        required: false
+        type: choice
+        options:
+          - auto
+          - qwen-local
+          - qwen-cloud
+          - gemini
+        default: 'auto'
+  repository_dispatch:
+    types: [mcp-execute]
+
+jobs:
+  execute-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      
+      - name: Execute MCP tool via control plane
+        id: mcp-exec
+        run: |
+          TOOL="${{ github.event.inputs.tool || github.event.client_payload.tool }}"
+          ARGS='${{ github.event.inputs.arguments || github.event.client_payload.arguments }}'
+          LLM="${{ github.event.inputs.llm_preference || github.event.client_payload.llm_preference || 'auto' }}'"
+          
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.CONTROL_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "tool": "'$TOOL'",
+              "arguments": '$ARGS',
+              "llm_preference": "'$LLM'"
+            }' \
+            https://${{ secrets.VPS_TAILSCALE_IP }}:5000/execute-mcp)
+          
+          echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+          echo "### MCP Execution Result" >> $GITHUB_STEP_SUMMARY
+          echo "**Tool:** \`$TOOL\`" >> $GITHUB_STEP_SUMMARY
+          echo "**LLM:** \`$LLM\`" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          echo "$RESPONSE" | jq . >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-result-${{ github.run_number }}
+          path: |
+            echo '${{ steps.mcp-exec.outputs.response }}' > result.json
