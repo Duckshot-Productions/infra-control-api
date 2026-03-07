@@ -1,0 +1,19 @@
+[Unit]
+Description=Scraper Worker
+After=network.target redis.service postgresql.service
+Requires=redis.service postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/infra-control-api
+EnvironmentFile=/opt/infra-control-api/.env
+ExecStart=/opt/infra-control-api/venv/bin/python workers/scraper_worker.py
+Restart=always
+RestartSec=10
+
+# Run multiple worker instances
+# Use systemctl start scraper_worker@{1..4}.service for 4 workers
+
+[Install]
+WantedBy=multi-user.target
